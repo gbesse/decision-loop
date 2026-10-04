@@ -10,7 +10,7 @@ npm install @gbesse/decision-loop
 decision-loop train examples/feedback.json ./models/candidate.json
 ```
 
-The output file is created atomically with mode `600` and is never overwritten.
+The output file is created exclusively with mode `600` and is never overwritten.
 Each artifact records its training fingerprint, algorithm, vocabulary, label
 counts and creation time. Promotion compares accuracy and log loss on the same
 reviewed validation set and produces a content-addressed receipt.

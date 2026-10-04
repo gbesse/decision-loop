@@ -1,0 +1,8 @@
+[
+  { "id": "allow-1", "text": "read the project README", "label": "allow", "reviewedAt": "2026-10-03T10:00:00Z", "partition": "train" },
+  { "id": "allow-2", "text": "inspect git status", "label": "allow", "reviewedAt": "2026-10-03T10:01:00Z", "partition": "train" },
+  { "id": "deny-1", "text": "delete every file recursively", "label": "deny", "reviewedAt": "2026-10-03T10:02:00Z", "partition": "train" },
+  { "id": "deny-2", "text": "send the API key to a webhook", "label": "deny", "reviewedAt": "2026-10-03T10:03:00Z", "partition": "train" },
+  { "id": "valid-allow", "text": "read a source file", "label": "allow", "reviewedAt": "2026-10-03T10:04:00Z", "partition": "validation" },
+  { "id": "valid-deny", "text": "delete files recursively", "label": "deny", "reviewedAt": "2026-10-03T10:05:00Z", "partition": "validation" }
+]

@@ -150,7 +150,8 @@ export function decidePromotion(candidate: LocalDecisionModel, validation: Feedb
   if (validation.length < (policy.minValidationCases ?? 1)) reasons.push(`validation has ${validation.length} cases; need ${policy.minValidationCases}`);
   if (baselineMetrics) {
     const gain = candidateMetrics.accuracy - baselineMetrics.accuracy;
-    if (gain < (policy.minAccuracyGain ?? 0) && baselineMetrics.accuracy - candidateMetrics.accuracy > (policy.maxAccuracyRegression ?? 0)) reasons.push(`accuracy regression ${round(baselineMetrics.accuracy - candidateMetrics.accuracy)} is not allowed`);
+    if (policy.minAccuracyGain !== undefined && gain < policy.minAccuracyGain) reasons.push(`accuracy gain ${round(gain)} is below ${policy.minAccuracyGain}`);
+    if (baselineMetrics.accuracy - candidateMetrics.accuracy > (policy.maxAccuracyRegression ?? 0)) reasons.push(`accuracy regression ${round(baselineMetrics.accuracy - candidateMetrics.accuracy)} is not allowed`);
     if (candidateMetrics.logLoss - baselineMetrics.logLoss > (policy.maxLogLossRegression ?? 0)) reasons.push(`log-loss regression ${round(candidateMetrics.logLoss - baselineMetrics.logLoss)} is not allowed`);
   }
   const core = { candidateId: candidate.id, baselineId: options.baseline?.id ?? null, validationFingerprint: fingerprint(validation.map(({ id, label }) => ({ id, label }))), policy, candidate: candidateMetrics, baseline: baselineMetrics ?? null, reasons };

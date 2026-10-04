@@ -33,3 +33,11 @@ test("prioritizes disagreements and low-confidence feedback", () => {
   ], 1);
   assert.equal(selected[0]?.id, "1");
 });
+
+test("enforces a requested minimum promotion gain", () => {
+  const split = splitFeedback(records);
+  const model = trainLocalModel(split.train, { id: "same" });
+  const decision = decidePromotion(model, split.validation, { baseline: model, policy: { minAccuracyGain: .01 } });
+  assert.equal(decision.promote, false);
+  assert.match(decision.reasons[0]!, /gain/);
+});

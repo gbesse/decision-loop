@@ -26,13 +26,14 @@ export interface LocalDecisionModel {
   tokenCounts: Record<string, Record<string, number>>;
   trainingFingerprint: string;
   trainingExamples: number;
+  trainingRecordIds?: string[];
   alpha: number;
 }
 
 export interface LocalPrediction { label: string; probabilities: Record<string, number>; confidence: number; margin: number; }
 export interface ModelMetrics { cases: number; accuracy: number; macroF1: number; logLoss: number; confusion: Record<string, Record<string, number>>; }
 export interface PromotionPolicy { minAccuracyGain?: number; maxAccuracyRegression?: number; maxLogLossRegression?: number; minValidationCases?: number; }
-export interface PromotionDecision { promote: boolean; reasons: string[]; candidate: ModelMetrics; baseline?: ModelMetrics; receipt: string; }
+export interface PromotionDecision { promote: boolean; reasons: string[]; candidate: ModelMetrics; baseline?: ModelMetrics; receipt: string; candidateFingerprint: string; baselineFingerprint: string | null; validationFingerprint: string; }
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 function round(value: number): number { return Math.round(value * 1000000) / 1000000; }
@@ -76,7 +77,7 @@ export function trainLocalModel(records: FeedbackRecord[], options: { alpha?: nu
   const vocabulary = new Set<string>();
   const classDocuments: Record<string, number> = Object.fromEntries(labels.map(label => [label, 0]));
   const classTokens: Record<string, number> = Object.fromEntries(labels.map(label => [label, 0]));
-  const tokenCounts: Record<string, Record<string, number>> = Object.fromEntries(labels.map(label => [label, {}]));
+  const tokenCounts: Record<string, Record<string, number>> = Object.fromEntries(labels.map(label => [label, Object.create(null)]));
   for (const record of records) {
     classDocuments[record.label] = (classDocuments[record.label] ?? 0) + 1;
     for (const token of tokenize(record.text)) {
@@ -89,19 +90,24 @@ export function trainLocalModel(records: FeedbackRecord[], options: { alpha?: nu
   return {
     schemaVersion: 1, id: options.id ?? randomUUID(), createdAt: options.createdAt ?? new Date().toISOString(), algorithm: "multinomial-naive-bayes",
     labels, vocabulary: [...vocabulary].sort(), classDocuments, classTokens, tokenCounts,
-    trainingFingerprint: fingerprint(records.map(({ id, text, label }) => ({ id, text, label }))), trainingExamples: records.length, alpha,
+    trainingFingerprint: fingerprint(records.map(({ id, text, label }) => ({ id, text, label }))), trainingExamples: records.length, trainingRecordIds: records.map(record=>record.id), alpha,
   };
 }
 
 export function predict(model: LocalDecisionModel, text: string): LocalPrediction {
   assert(model.schemaVersion === 1 && model.algorithm === "multinomial-naive-bayes", "Unsupported model artifact");
+  const count=(values:Record<string,number>|undefined,key:string):number=>{
+    const value=values&&Object.hasOwn(values,key)?values[key]!:0;
+    assert(Number.isSafeInteger(value)&&value>=0,'FR : compte modèle invalide. EN: invalid model count. ES: recuento de modelo no válido.');
+    return value;
+  };
   const tokens = tokenize(text).filter(token => model.vocabulary.includes(token));
   const totalDocuments = Object.values(model.classDocuments).reduce((a, b) => a + b, 0);
-  const scores: Record<string, number> = {};
+  const scores: Record<string, number> = Object.create(null);
   for (const label of model.labels) {
-    let score = Math.log(((model.classDocuments[label] ?? 0) + model.alpha) / (totalDocuments + model.alpha * model.labels.length));
-    const denominator = (model.classTokens[label] ?? 0) + model.alpha * model.vocabulary.length;
-    for (const token of tokens) score += Math.log(((model.tokenCounts[label]?.[token] ?? 0) + model.alpha) / denominator);
+    let score = Math.log((count(model.classDocuments,label) + model.alpha) / (totalDocuments + model.alpha * model.labels.length));
+    const denominator = count(model.classTokens,label) + model.alpha * model.vocabulary.length;
+    for (const token of tokens) score += Math.log((count(model.tokenCounts[label],token) + model.alpha) / denominator);
     scores[label] = score;
   }
   const max = Math.max(...Object.values(scores));
@@ -143,10 +149,15 @@ export function selectHardExamples(records: FeedbackRecord[], limit = 100): Feed
 }
 
 export function decidePromotion(candidate: LocalDecisionModel, validation: FeedbackRecord[], options: { baseline?: LocalDecisionModel; policy?: PromotionPolicy } = {}): PromotionDecision {
+  const policy = {minValidationCases: options.policy?.minValidationCases??1,maxAccuracyRegression: options.policy?.maxAccuracyRegression??0,maxLogLossRegression: options.policy?.maxLogLossRegression??0,...(options.policy?.minAccuracyGain!==undefined?{minAccuracyGain:options.policy.minAccuracyGain}:{})};
+  assert(Number.isSafeInteger(policy.minValidationCases)&&policy.minValidationCases>=1&&Number.isFinite(policy.maxAccuracyRegression)&&policy.maxAccuracyRegression>=0&&policy.maxAccuracyRegression<=1&&Number.isFinite(policy.maxLogLossRegression)&&policy.maxLogLossRegression>=0&&(policy.minAccuracyGain===undefined||(Number.isFinite(policy.minAccuracyGain)&&policy.minAccuracyGain>=-1&&policy.minAccuracyGain<=1)),
+    'FR : politique de promotion invalide. EN: invalid promotion policy. ES: política de promoción no válida.');
   const candidateMetrics = evaluateModel(candidate, validation);
   const baselineMetrics = options.baseline ? evaluateModel(options.baseline, validation) : undefined;
-  const policy = options.policy ?? {};
   const reasons: string[] = [];
+  if(!candidate.trainingRecordIds) reasons.push('FR : ID entraînement absents. EN: training IDs unavailable. ES: ID de entrenamiento ausentes.');
+  else if(validation.some(record=>candidate.trainingRecordIds!.includes(record.id))) reasons.push('FR : chevauchement entraînement/validation. EN: training/validation overlap. ES: solapamiento entrenamiento/validación.');
+  if(policy.minAccuracyGain!==undefined&&!options.baseline)reasons.push('FR : modèle de référence requis pour comparer le gain. EN: baseline required to compare gain. ES: se requiere modelo base para comparar mejora.');
   if (validation.length < (policy.minValidationCases ?? 1)) reasons.push(`validation has ${validation.length} cases; need ${policy.minValidationCases}`);
   if (baselineMetrics) {
     const gain = candidateMetrics.accuracy - baselineMetrics.accuracy;
@@ -154,6 +165,6 @@ export function decidePromotion(candidate: LocalDecisionModel, validation: Feedb
     if (baselineMetrics.accuracy - candidateMetrics.accuracy > (policy.maxAccuracyRegression ?? 0)) reasons.push(`accuracy regression ${round(baselineMetrics.accuracy - candidateMetrics.accuracy)} is not allowed`);
     if (candidateMetrics.logLoss - baselineMetrics.logLoss > (policy.maxLogLossRegression ?? 0)) reasons.push(`log-loss regression ${round(candidateMetrics.logLoss - baselineMetrics.logLoss)} is not allowed`);
   }
-  const core = { candidateId: candidate.id, baselineId: options.baseline?.id ?? null, validationFingerprint: fingerprint(validation.map(({ id, label }) => ({ id, label }))), policy, candidate: candidateMetrics, baseline: baselineMetrics ?? null, reasons };
-  return { promote: reasons.length === 0, reasons, candidate: candidateMetrics, ...(baselineMetrics ? { baseline: baselineMetrics } : {}), receipt: fingerprint(core) };
+  const core = { candidateId: candidate.id, baselineId: options.baseline?.id ?? null, candidateFingerprint: fingerprint(candidate), baselineFingerprint: options.baseline?fingerprint(options.baseline):null, validationFingerprint: fingerprint(validation), policy, candidate: candidateMetrics, baseline: baselineMetrics ?? null, reasons };
+  return { promote: reasons.length === 0, reasons, candidate: candidateMetrics, ...(baselineMetrics ? { baseline: baselineMetrics } : {}), receipt: fingerprint(core), candidateFingerprint:core.candidateFingerprint,baselineFingerprint:core.baselineFingerprint,validationFingerprint:core.validationFingerprint };
 }
